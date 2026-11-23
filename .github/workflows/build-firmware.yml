@@ -1,0 +1,48 @@
+# Builds Alice's Sofle firmware (Helios / RP2040) whenever the keymap changes,
+# and on demand from the Actions tab ("Run workflow").
+#
+# To flash: open the finished run, download the file under "Artifacts", unzip
+# it, double-tap the reset button on the keyboard, and drag the .uf2 file onto
+# the drive that appears. Flash the same file to both halves.
+#
+# The Helios converter and touchpad driver are set in the keymap's rules.mk,
+# so no extra build options are needed here.
+
+name: Build Sofle firmware
+
+on:
+  push:
+    paths:
+      - "keyboards/sofle_choc/**"
+      - ".github/workflows/build-firmware.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KEYBOARD: sofle_choc
+  KEYMAP: alice
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: ghcr.io/qmk/qmk_cli
+
+    steps:
+      - name: Check out the firmware
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Compile
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          qmk compile -kb "$KEYBOARD" -km "$KEYMAP"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: sofle-${{ env.KEYMAP }}-firmware
+          path: "*.uf2"
+          if-no-files-found: error
