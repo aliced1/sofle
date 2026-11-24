@@ -14,11 +14,22 @@
 //   _BASE  right-hand keys, 6-0 on top
 //   _LEFT  left-hand keys in their normal order, 1-5 on top
 //   _SYM   symbols
-//   _FN    function/media
+//   _FN    function/media, plus the touchpad scroll-speed keys
+//
+// Scroll speed: SCRL_SLOW / SCRL_FAST step the touchpad's two-finger scroll
+// speed down / up. The setting is saved on the keyboard, so it survives
+// unplugging. Pointer movement speed is not affected.
 
 #include QMK_KEYBOARD_H
 
 enum layers { _BASE, _LEFT, _SYM, _FN };
+
+// User keycodes (QK_USER_n) rather than SAFE_RANGE, so a Vial/VIA build can
+// show them as named custom keys later.
+enum custom_keycodes {
+    SCRL_SLOW = QK_USER_0,
+    SCRL_FAST = QK_USER_1,
+};
 
 // Combos from the Corne keymap. The left-hand ones fire on the _LEFT layer.
 const uint16_t PROGMEM y_u_rprn[] = {KC_Y, KC_U, COMBO_END};
@@ -74,11 +85,105 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     ),
 
     // Function/Media (right half of Corne layer 3). QK_BOOT top-right for reflashing.
+    // Scroll speed: slower on the comma key, faster on the slash key.
     [_FN] = LAYOUT(
         _______, _______, _______, _______, _______, _______,            _______, _______, _______, _______, _______, QK_BOOT,
         _______, _______, _______, _______, _______, _______,            KC_F7,   KC_F8,   KC_F9,   KC_F10,  KC_F11,  KC_F12,
         _______, _______, _______, _______, _______, _______,            KC_BRIU, LCS(KC_V), LSFT(KC_INS), DM_REC2, DM_RSTP, _______,
-        _______, _______, _______, _______, _______, _______, _______,   _______, KC_BRID, LSG(KC_S), KC_NO, DM_PLY2, KC_NO,   _______,
+        _______, _______, _______, _______, _______, _______, _______,   _______, KC_BRID, LSG(KC_S), SCRL_SLOW, DM_PLY2, SCRL_FAST, _______,
                  _______, _______, _______, _______, _______,            _______, _______, _______, _______, _______
     ),
 };
+
+// ---------------------------------------------------------------------------
+// Touchpad scroll speed
+//
+// The Azoteq driver reports two-finger scrolling as raw h/v deltas. Each
+// report is scaled by a percentage from the table below; the leftover
+// fraction is carried to the next report, so slow settings still scroll
+// smoothly instead of dropping small movements.
+// ---------------------------------------------------------------------------
+
+static const uint16_t scroll_pct[] = {20, 30, 45, 65, 100, 150, 225, 340, 500};
+#define SCROLL_LEVELS (sizeof(scroll_pct) / sizeof(scroll_pct[0]))
+#define SCROLL_DEFAULT_LEVEL 4 // 100%: the driver's own speed
+#define USER_CONFIG_MAGIC 0xA5  // marks the saved setting as ours
+
+typedef union {
+    uint32_t raw;
+    struct {
+        uint8_t scroll_level;
+        uint8_t magic;
+    };
+} user_config_t;
+
+static user_config_t user_config;
+
+static void save_user_config(void) {
+    eeconfig_update_user(user_config.raw);
+}
+
+static void reset_user_config(void) {
+    user_config.raw          = 0;
+    user_config.scroll_level = SCROLL_DEFAULT_LEVEL;
+    user_config.magic        = USER_CONFIG_MAGIC;
+    save_user_config();
+}
+
+// Runs when the keyboard's settings storage is wiped (EE_CLR, or first boot).
+void eeconfig_init_user(void) {
+    reset_user_config();
+}
+
+void keyboard_post_init_user(void) {
+    user_config.raw = eeconfig_read_user();
+    // Storage written by an older firmware, or out of range: start at 100%.
+    if (user_config.magic != USER_CONFIG_MAGIC || user_config.scroll_level >= SCROLL_LEVELS) {
+        reset_user_config();
+    }
+}
+
+bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+    if (!record->event.pressed) {
+        return true;
+    }
+    switch (keycode) {
+        case SCRL_SLOW:
+            if (user_config.scroll_level > 0) {
+                user_config.scroll_level--;
+                save_user_config();
+            }
+            return false;
+        case SCRL_FAST:
+            if (user_config.scroll_level < SCROLL_LEVELS - 1) {
+                user_config.scroll_level++;
+                save_user_config();
+            }
+            return false;
+    }
+    return true;
+}
+
+// Scales one scroll axis, keeping the remainder in *acc (in 1/100ths).
+static mouse_hv_report_t scale_scroll(mouse_hv_report_t value, int32_t *acc) {
+    if (value == 0) {
+        return 0;
+    }
+    // Drop the leftover when the direction reverses, so it doesn't lag.
+    if ((value > 0 && *acc < 0) || (value < 0 && *acc > 0)) {
+        *acc = 0;
+    }
+    *acc += (int32_t)value * scroll_pct[user_config.scroll_level];
+    int32_t out = *acc / 100;
+    *acc -= out * 100;
+    if (out > 127) out = 127;
+    if (out < -127) out = -127;
+    return (mouse_hv_report_t)out;
+}
+
+report_mouse_t pointing_device_task_user(report_mouse_t mouse_report) {
+    static int32_t acc_h = 0, acc_v = 0;
+    mouse_report.h = scale_scroll(mouse_report.h, &acc_h);
+    mouse_report.v = scale_scroll(mouse_report.v, &acc_v);
+    return mouse_report;
+}
