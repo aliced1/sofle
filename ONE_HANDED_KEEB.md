@@ -11,7 +11,8 @@ Build a one-handed keyboard for the user's disabled sister. She types with her r
 ## Status (2026-11-12)
 
 - Hardware is built. Firmware compiles and has been flashed to both halves: typing on the right half works, the split link works, and the touchpad works. A box button that does nothing at all is likely the box half missing this firmware (both halves must be flashed once).
-- The touchpad works (so the OLED-header I2C wiring assumption holds). Its axes were reversed; the 180° rotation fix is built but not yet confirmed on hardware.
+- The touchpad works (so the OLED-header I2C wiring assumption holds), with the 180° rotation fix.
+- **Touchpad repair (2026-11-24):** the touchpad stopped responding (an I2C scan found nothing at 0x74). Measured against a Helios GND, every touchpad pad, including its GND, read 3.3 V: the touchpad's ground was open, so the chip was unpowered. The cause was the ribbon cable between the pin-mount PCB and the touchpad PCB. The user replaced it with four hand-soldered wires (VCC, GND, SDA, SCL), and it works again. The QMK Azoteq driver uses no RDY/RST pins, so those four are all it needs. If it dies again, check that ground first.
 - Not yet confirmed on hardware: the button-box layer keys, the touchpad gestures, the combos, and the rotary encoder.
 
 ## Why a button box instead of a USB macropad
@@ -24,7 +25,7 @@ A separate USB macropad can't change layers on another keyboard: each runs its o
 
 - **Both halves:** 0xCB Helios (RP2040, Pro Micro footprint). The button box's Helios sits on a prototyping board in a 3D-printed case.
 - On the Sofle PCB the controller is mounted **face down**, which mirrors its pin columns. Always identify pins by their printed names, not left/right position.
-- No OLED on the right half. The touchpad is assumed to use the OLED header's I2C pins (D1/D0 = GP2/GP3). Not verified; if the touchpad doesn't respond, check this first.
+- No OLED on the right half. The touchpad uses the OLED header's I2C pins (D1/D0 = GP2/GP3); confirmed working.
 
 ### Button box wiring
 
@@ -75,7 +76,7 @@ Output: `/home/duffa1/sofle/sofle_choc_alice.uf2`. No `-e` flags are needed, bec
 ### Flashing
 
 - The keymap lives on the master, so a keymap change only needs flashing to the **right half**. The first flash, or anything that changes split/matrix behaviour, goes to both halves (same `.uf2`).
-- To enter the bootloader: double-tap the reset button (`RP2040_BOOTLOADER_DOUBLE_TAP_RESET` is on), or hold the right half's top outer key (`` ` ``, matrix [5,0]) while plugging in, or press `QK_BOOT` on the Fn layer. Then copy the `.uf2` to the RPI-RP2 drive.
+- To enter the bootloader: double-tap the reset button (`RP2040_BOOTLOADER_DOUBLE_TAP_RESET` is on), or hold the right half's top outer key (`` ` ``, matrix [5,0]) while plugging in. (`QK_BOOT` was removed from the keymap at the user's request.) Then copy the `.uf2` to the RPI-RP2 drive.
 - **USB always goes into the right half.** `MASTER_RIGHT` is hard-coded, so the half with USB is treated as the right half.
 
 ### Build environment setup (already done on this machine; for reference)
@@ -120,26 +121,32 @@ Ported from the user's Corne keymap (`/mnt/c/Users/Alice/qmk_firmware/keyboards/
 | Layer | Box switch | Right-half contents |
 | --- | --- | --- |
 | `_BASE` | n/a | Corne right half; top row `6 7 8 9 0 ``. Thumbs: `LT(_SYM,BSPC)`, Space, OS-Alt, Enter, Tab (Enter/Tab are placeholders) |
-| `_LEFT` | left (F6) = `OSL(_LEFT)` | Corne left-hand keys in their normal order (not mirrored); top row `` ` 1 2 3 4 5`` |
+| `_LEFT` | left (F6) = `OSL(_LEFT)` | Corne left-hand letters in their normal order (not mirrored), shifted one column left: `1-5`, `Q-T`, `A-G`, `Z-B` in R0–R4; R5 is transparent (base layer's Esc / Del / Shift / Ctrl). The Corne's outer column (`` ` `` Esc Shift Ctrl) was dropped |
 | `_SYM` | middle (F7) = `OSL(_SYM)` | Right half of the Corne symbol layer |
-| `_FN` | right (B1) = `OSL(_FN)` | Right half of the Corne function/media layer; `QK_BOOT` at the top outer key |
+| `_FN` | right (B1) = `OSL(_FN)` | F1–F6 top row, F7–F12 below. Arrows as an inverted T (Up at R2, Left/Down/Right at R1–R3 below), Ctrl+Tab left of Up, Ctrl+Shift+Tab right of Up. LED keys: `RM_NEXT` (pattern) / `RM_TOGG` (on/off) at R0, `RM_VALU`/`RM_VALD` (brightness) at R4. The Corne's dynamic-macro/clipboard keys were removed by the user |
 | n/a | B3 = `KC_NO` | Unfitted position |
 
 - `OSL()` = tap for the next key only, hold for momentary. The user chose this behaviour.
+- `keymap.c` formatting: each layer is a fixed grid of 12-character columns (labelled L0–L5, inner, inner, R0–R5), wrapped in `// clang-format off/on`. Keep new keycodes within 11 characters; use a `#define` alias for longer ones, as with `SYM_BSPC` = `LT(_SYM, KC_BSPC)`. The grid was produced by a one-off script; hand edits are fine as long as columns stay aligned.
 - Combos: Y+U `)`, H+J `]`, N+M `}`, J+K Esc on base; R+T `(`, F+G `[`, V+B `{` on `_LEFT`.
 - The right rotary encoder uses the board default (PgUp/PgDn).
-- The board has per-key RGB matrix enabled by default; it was left as-is.
+- **LED brightness is capped** at `RGB_MATRIX_MAXIMUM_BRIGHTNESS 130` (default 50; raised from 100, which was stable but dim; 130 confirmed stable and bright enough by the user) in `config.h`, and `keyboard_post_init_user()` clamps any saved brightness above that at boot. Without the cap (QMK's default is 255), changing LED pattern browned out the board: USB disconnected, the LEDs went dark, and it boot-looped. Each crash-reset counted toward the double-tap-reset detection (timeout raised to 2000 ms by the user), so it kept dropping into the bootloader (the RPI-RP2 drive opening/closing in Explorer). Recovery took pulling the controller and shorting reset. The board's own default keymap uses the same cap of 100. The controller and touchpad sit in removable pin sockets; those add resistance and can flex, so suspect them if resets happen at low brightness.
+- **Reactive LED patterns** (keys light up when pressed; wide/cross/nexus/splash variants light the keys around them) are enabled in `config.h` with `RGB_MATRIX_KEYPRESSES` plus 12 `ENABLE_RGB_MATRIX_*` lines. `RM_NEXT` cycles 41 patterns in total; delete lines to trim. These don't change the split transport, so only the right half needs flashing.
+- Bootmagic: holding the right half's top outer key (Esc, [5,0]) while plugging in wipes saved settings and enters the bootloader. It's a power-on check, not a keymap key.
+- Per-key RGB matrix is on (board default, 29 patterns enabled in `sofle_choc/keyboard.json`); the `RM_*` keys on `_FN` save their settings to EEPROM automatically.
+- **Touchpad scroll speed:** `TOUCHPAD_SCROLL_DIVISOR` in `config.h` (whole number; higher = slower; 1 = raw). It's applied in `pointing_device_task_user()` in `keymap.c`, with a carry so slow scrolls aren't lost. To scroll *faster*, use Windows Settings → Bluetooth & devices → Mouse → "Lines to scroll at a time" (affects all mice). The QMK Azoteq driver has no built-in scroll-speed option.
 
 ## Open items / known gaps
 
-1. **No arrow keys or nav anywhere.** The Corne's numpad layer had Home/End, arrows, PgUp/PgDn, Ctrl(+Shift)+Tab and cut/copy/paste on its left half; that layer was removed. `QK_REP` was also on it. The empty top rows of `_SYM`/`_FN` have room.
+1. Arrows and Ctrl(+Shift)+Tab are now on `_FN`. Still missing from the Corne: Home/End, PgUp/PgDn (the encoder does PgUp/PgDn), cut/copy/paste, and `QK_REP`.
 2. **Left half of the Corne symbol layer** (`^ = `` @ * - # + _`) was never ported.
 3. Box layer keys were just restored on F6/F7/B1; the user is testing them. Their wiring was confirmed with a digit test first.
 4. Typing several left-hand letters needs SW1 held or tapped before each letter. Option: `#define ONESHOT_TAP_TOGGLE 2` so a double-tap locks the layer.
-5. Confirm the 180° touchpad rotation fixed the reversed directions.
+5. The 180° touchpad rotation is confirmed.
 6. Find out whether she can comfortably hold the buttons. This affects whether `OSL` is the right choice versus `TG`, Layer Lock, etc.
 7. Backup right-hand-only ways to change layers (layer-taps, combos, encoder) were in the original plan; only `LT(_SYM, BSPC)` exists so far.
-8. Nothing is committed yet (`ONE_HANDED_KEEB.md` and `keyboards/sofle_choc/keymaps/alice/` are untracked).
+8. Everything since commit 49e79dbecd ("Adding initial keymap") is uncommitted.
+9. `RGB_MATRIX_MAXIMUM_BRIGHTNESS` was later raised to 200 by the user, above the 130 tested as stable. Drop it back if resets return.
 
 ## Related
 
