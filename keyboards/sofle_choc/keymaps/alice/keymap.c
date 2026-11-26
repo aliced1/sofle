@@ -15,6 +15,11 @@
 //   _LEFT  left-hand keys in their normal order, 1-5 on top
 //   _SYM   symbols
 //   _FN    F-keys, arrows, tab switching, LED controls
+//
+// Thumb row (right half, inner -> outer), so the right hand alone can reach
+// every layer:
+//   tap:   Tab      Space    Bksp     Enter    one-shot LEFT (next key only)
+//   hold:  FN       LEFT     SYM      FN       Alt
 
 #include QMK_KEYBOARD_H
 
@@ -23,11 +28,17 @@ enum layers { _BASE, _LEFT, _SYM, _FN };
 // Text shortcuts (Symbols layer, bottom letter row): each types a phrase.
 enum custom_keycodes {
     RS_SHORT = SAFE_RANGE, // types "R&S"
-    RS_FULL,               // types "Rohde & Schwarz GmbH"
+    RS_FULL,               // types "Rohde & Schwarz USA, Inc."
 };
 
-// Short name so it fits a 12-character column in the grid below.
-#define SYM_BSPC LT(_SYM, KC_BSPC) // tap = Backspace, hold = symbols layer
+// Thumb keys. Short names so they fit a 12-character column in the grid below.
+#define TAB_FN   LT(_FN, KC_TAB)    // tap = Tab, hold = function layer
+#define SPC_LEFT LT(_LEFT, KC_SPC)  // tap = Space, hold = left-hand keys
+#define SYM_BSPC LT(_SYM, KC_BSPC)  // tap = Backspace, hold = symbols layer
+#define ENT_FN   LT(_FN, KC_ENT)    // tap = Enter, hold = function layer
+// Hold = Alt. The tap keycode (F24) is never sent: process_record_user turns
+// a tap into a one-shot LEFT.
+#define LEFT_ALT LALT_T(KC_F24)
 
 // Combos from the Corne keymap. The left-hand ones fire on the _LEFT layer.
 const uint16_t PROGMEM y_u_rprn[] = {KC_Y, KC_U, COMBO_END};
@@ -66,7 +77,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         KC_NO,      KC_NO,      KC_NO,      KC_NO,      KC_NO,      KC_NO,                              KC_Y,       KC_U,       KC_I,       KC_O,       KC_P,       KC_DEL,
         KC_NO,      KC_NO,      KC_NO,      KC_NO,      KC_NO,      KC_NO,                              KC_H,       KC_J,       KC_K,       KC_L,       KC_SCLN,    OS_RSFT,
         OSL(_LEFT), OSL(_SYM),  OSL(_FN),   KC_NO,      KC_NO,      KC_NO,      KC_NO,      KC_NO,      KC_N,       KC_M,       KC_COMM,    KC_DOT,     KC_SLSH,    OS_LCTL,
-                                KC_NO,      KC_NO,      KC_NO,      KC_NO,      KC_NO,      SYM_BSPC,   KC_SPC,     OS_LALT,    KC_ENT,     KC_TAB
+                                KC_NO,      KC_NO,      KC_NO,      KC_NO,      KC_NO,      TAB_FN,     SPC_LEFT,   SYM_BSPC,   ENT_FN,     LEFT_ALT
     ),
 
     // Left-hand keys (left half of Corne layer 0), shifted one column left so Q-T
@@ -104,14 +115,44 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 };
 // clang-format on
 
+// Left encoder isn't fitted; right encoder is volume on every layer.
+const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {
+    [_BASE] = { ENCODER_CCW_CW(KC_NO, KC_NO), ENCODER_CCW_CW(KC_VOLD, KC_VOLU) },
+    [_LEFT] = { ENCODER_CCW_CW(_______, _______), ENCODER_CCW_CW(_______, _______) },
+    [_SYM]  = { ENCODER_CCW_CW(_______, _______), ENCODER_CCW_CW(_______, _______) },
+    [_FN]   = { ENCODER_CCW_CW(_______, _______), ENCODER_CCW_CW(_______, _______) },
+};
+
+// Space needs to become the LEFT layer even right after a tapped space
+// ("the cat": tap Space, then hold Space + a key). The default quick-tap
+// behaviour would turn that second press into a held, repeating space.
+// Backspace keeps quick-tap, so tap-then-hold still repeats it.
+uint16_t get_quick_tap_term(uint16_t keycode, keyrecord_t *record) {
+    switch (keycode) {
+        case SPC_LEFT:
+            return 0;
+        default:
+            return QUICK_TAP_TERM;
+    }
+}
+
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+    // Tapped: behave like OSL(_LEFT). Held: falls through to Alt.
+    if (keycode == LEFT_ALT && record->tap.count) {
+        if (record->event.pressed) {
+            set_oneshot_layer(_LEFT, ONESHOT_START);
+        } else {
+            clear_oneshot_layer_state(ONESHOT_PRESSED);
+        }
+        return false;
+    }
     if (!record->event.pressed) return true;
     switch (keycode) {
         case RS_SHORT:
             SEND_STRING("R&S");
             return false;
         case RS_FULL:
-            SEND_STRING("Rohde & Schwarz GmbH");
+            SEND_STRING("Rohde & Schwarz USA, Inc.");
             return false;
     }
     return true;
