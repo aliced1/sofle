@@ -18,3 +18,9 @@
 #define AZOTEQ_IQS5XX_ROTATION_180
 
 #define DYNAMIC_MACRO_NO_NESTING
+
+// Thumb keys are tap-hold. Permissive hold: if another key is pressed AND
+// released while a thumb key is down, it counts as a hold even if it was
+// quick -- needed for fast half-QWERTY (hold Space, tap a letter).
+#define PERMISSIVE_HOLD
+#define QUICK_TAP_TERM_PER_KEY

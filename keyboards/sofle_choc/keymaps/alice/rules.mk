@@ -13,3 +13,7 @@ REPEAT_KEY_ENABLE = yes
 
 # No OLED: the touchpad uses the OLED header's I2C pins.
 OLED_ENABLE = no
+
+# Right-half volume encoder (click = mute is a matrix key, [9,5]).
+ENCODER_MAP_ENABLE = yes
+CAPS_WORD_ENABLE = yes
